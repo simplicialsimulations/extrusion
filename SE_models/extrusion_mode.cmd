@@ -899,4 +899,106 @@ buildpolarapi := {
 buildpolarapi;
 
 //****************************************************************************************************
+// this is only for constructing the new topmost lateral band edges and facets for the subdivision of the topmost lateral band
+build_top_lat := {
 
+	// Count/determine status of discretization
+	band_max := max(edge elsa where (elsa.cbandwidth > 0), elsa.cbandwidth);
+	ring_max := max(edge elsa where (elsa.cringedge > 0), elsa.cringedge);
+	tri_max := max(facet ff where (ff.tri > 0), ff.tri);
+
+	// Loop to build edges
+	for ( bb := 1 ; bb < (discret_max+1) ; bb := bb + 1 ) {
+
+		if (bb == discret_max) then {
+			foreach vertex vv where (cringvertex == (ring_max-1) && v_side == bb) do {
+				foreach vertex vvv where (cringvertex == ring_max && v_side == bb) do {
+					new_apivertical := new_edge(vv.id, vvv.id);
+					set edge[new_apivertical] cbandwidth (band_max + 1);
+					set edge[new_apivertical] e_side bb;
+				};
+			};
+			foreach vertex vv where (cringvertex == ring_max && v_side == 1) do {
+				foreach vertex vvv where (cringvertex == (ring_max-1) && v_side == bb) do {
+					new_apidiag := new_edge(vv.id, vvv.id);
+					set edge[new_apidiag] e_diag 1;
+					set edge[new_apidiag] e_side bb;
+					set edge[new_apidiag] bandsq (band_max + 1);
+				};
+			};
+		}
+		else {
+			foreach vertex vv where (cringvertex == (ring_max-1) && v_side == bb) do {
+				foreach vertex vvv where (cringvertex == ring_max && v_side == bb) do {
+					new_apivertical := new_edge(vv.id, vvv.id);
+					set edge[new_apivertical] cbandwidth (band_max + 1);
+					set edge[new_apivertical] e_side bb;
+				};
+			};
+			foreach vertex vv where (cringvertex == ring_max && v_side == (bb+1)) do {
+				foreach vertex vvv where (cringvertex == (ring_max-1) && v_side == bb) do {
+					new_apidiag := new_edge(vv.id, vvv.id);
+					set edge[new_apidiag] e_diag 1;
+					set edge[new_apidiag] e_side bb;
+					set edge[new_apidiag] bandsq (band_max + 1);
+				};
+			};
+		}; // end of else statement for edges
+
+		}; // end of building edges
+
+	// Loop to build facets
+	for ( bb := 1 ; bb < (discret_max+1) ; bb := bb + 1 ) {
+
+			if (bb == discret_max) then {
+			// Right triangle
+			foreach edge ee1 where (cbandwidth == (band_max + 1) && e_side == 1) do {
+				foreach edge ee2 where (bandsq == (band_max + 1) && e_side == bb) do {
+					foreach edge ee3 where (cringedge == (ring_max-1) && e_side == bb) do {
+						new_right_tri := new_facet(ee1.id, ee2.id, ee3.id);
+						set facet[new_right_tri] tri (band_max + 1);
+						set facet[new_right_tri] f_side bb;
+					};
+				};
+			};
+
+			// Left triangle
+			foreach edge ee1 where (bandsq == (band_max + 1) && e_side == bb) do {
+				foreach edge ee2 where (cringedge == ring_max && e_side == bb) do {
+					foreach edge ee3 where (cbandwidth == (band_max + 1) && e_side == bb) do {
+						new_left_tri := new_facet(-ee1.id, -ee2.id, -ee3.id);
+						set facet[new_left_tri] tri (band_max + 1);
+						set facet[new_left_tri] f_side bb;
+					};
+				};
+			};
+			}
+			else {
+			// Right triangle
+			foreach edge ee1 where (cbandwidth == (band_max + 1) && e_side == (bb+1)) do {
+				foreach edge ee2 where (bandsq == (band_max + 1) && e_side == bb) do {
+					foreach edge ee3 where (cringedge == (ring_max-1) && e_side == bb) do {
+						new_right_tri := new_facet(ee1.id, ee2.id, ee3.id);
+						set facet[new_right_tri] tri (band_max + 1);
+						set facet[new_right_tri] f_side bb;
+					};
+				};
+			};
+
+			// Left triangle
+			foreach edge ee1 where (bandsq == (band_max + 1) && e_side == bb) do {
+				foreach edge ee2 where (cringedge == ring_max && e_side == bb) do {
+					foreach edge ee3 where (cbandwidth == (band_max + 1) && e_side == bb) do {
+						new_left_tri := new_facet(-ee1.id, -ee2.id, -ee3.id);
+						set facet[new_left_tri] tri (band_max + 1);
+						set facet[new_left_tri] f_side bb;
+					};
+				};
+			};
+			}; // end of else statement for facets
+		}; // end of building facets
+
+};
+build_top_lat;
+
+//****************************************************************************************************
