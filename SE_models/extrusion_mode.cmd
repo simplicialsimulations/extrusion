@@ -1002,3 +1002,269 @@ build_top_lat := {
 build_top_lat;
 
 //****************************************************************************************************
+// Count/determine status of discretization
+band_max := max(edge elsa where (elsa.cbandwidth > 0), elsa.cbandwidth);
+ring_max := max(edge elsa where (elsa.cringedge > 0), elsa.cringedge);
+tri_max := max(facet ff where (ff.tri > 0), ff.tri);
+
+// Do not place the definition of new_body inside a function, it should only be executed/introduced once!
+// For example: 'cyl_body := new_body' is what I mean by a new_body definition.
+// to set the new facets onto a new center cell body
+cyl_body := new_body;
+
+setrefinedbody := {
+
+	set facet frontbody cyl_body where (basespoke_tri == 1);
+	set facet frontbody cyl_body where (tri > 0);
+	set facet frontbody cyl_body where (apispoke_tri == 1);
+	set facet frontbody cyl_body where (apibandtri > 0);
+
+	// Not needed for all vertices of center cell
+	//foreach vertex vv where (vv.cringvertex < (ring_max/2)) do {
+	//	set vertex[vv.id] constraint 2;
+	//};
+
+	// 'frontbody' is used because the orientation of the facets for the neighbouring bands are pointing to the center cell
+	set facet frontbody neigh_body where (ntri > 0);
+	set facet frontbody neigh_body where (nbase_tri == 1);
+	set facet frontbody neigh_body where (napi_tri == 1);
+	set facet frontbody neigh_body where (nouter_tri == 1);
+
+	// The purpose of calculating these max index values is to ensure they are updated after every kind of adaptive refinement is executed
+	band_max := max(edge elsa where (elsa.cbandwidth > 0), elsa.cbandwidth);
+	ring_max := max(edge elsa where (elsa.cringedge > 0), elsa.cringedge);
+	tri_max := max(facet ff where (ff.tri > 0), ff.tri);
+
+	nband_max := max(edge elsa where (elsa.nbandwidth > 0), elsa.nbandwidth);
+	nring_max := max(edge elsa where (elsa.nringedge > 0), elsa.nringedge);
+	ntri_max := max(facet ff where (ff.ntri > 0), ff.ntri);
+};
+setrefinedbody;
+// Remember to call 'setrefinedbody' after every action of refinement (subdivision or coarsening)
+
+
+// Settings for
+// - setting up uniform cortex properties (thickness, depolymerization rate, eqmthickness...)
+// the initial value of the signal overactivity time function
+sig_t := 1;
+
+// To set initial cortex prop for center cell
+// Initial cortex property before basal ring contraction
+ini_cortex_prop := {
+	set_vol_c := { body[1].target := cvol; };
+	set_vol_c;
+
+	band_max := max(edge elsa where (elsa.cbandwidth > 0), elsa.cbandwidth);
+	ring_max := max(edge elsa where (elsa.cringedge > 0), elsa.cringedge);
+	tri_max := max(facet ff where (ff.tri > 0), ff.tri);
+
+//****************
+// For center cell
+//****************
+
+	// find the current position of the reference ring which marks the OZ boundary that is a line on a ring
+	// Set 'ref_position' with value 0 to indicate OZ begins from basal pole
+	ref_position := 0;
+
+	// for base pole facets
+	foreach edge eaxbp where (base_spoke == 1 && e_side == 1) do {
+
+		set edge[eaxbp.id] bandthickness ini_bthickness;
+		set edge[eaxbp.id] banddepoly ini_bdepoly;
+		set edge[eaxbp.id] bandeqmthickness ini_beqmthickness;
+		set edge[eaxbp.id] bandviscous ini_bviscous;
+
+		// In this section, the basal pole is not part of OZ, so its zetab is at baseline.
+		// zetab is always at baseline level when it is outside of overactive zone signal width
+		set edge[eaxbp.id] zetab (zetab_band_baseline);
+		eaxbp_tens := (eaxbp.zetab*eaxbp.bandthickness);
+		foreach facet eaxialbp where (basespoke_tri == 1 && f_side > 0) do {
+			set facet[eaxialbp.id] tension eaxbp_tens;
+		};
+	};
+
+	// for apical polar cap facets
+	foreach edge eaxap where (api_spoke == 1 && e_side == 1) do {
+
+		set edge[eaxap.id] bandthickness ini_bthickness;
+		set edge[eaxap.id] banddepoly ini_bdepoly;
+		set edge[eaxap.id] bandeqmthickness ini_beqmthickness;
+		set edge[eaxap.id] bandviscous ini_bviscous;
+
+		set edge[eaxap.id] ringthickness ini_rthickness;
+		set edge[eaxap.id] ringdepoly ini_rdepoly;
+		set edge[eaxap.id] ringeqmthickness ini_reqmthickness;
+		set edge[eaxap.id] ringviscous ini_rviscous;
+
+		// zetab is at baseline level when it is outside of overactive zone, 2nd degree & higher order away from OZ boundary
+		set edge[eaxap.id] zetab (zetab_band_baseline);
+		eaxap_tens := (eaxap.zetab*eaxap.bandthickness);
+		foreach facet eaxialap where (apispoke_tri == 1 || apibandtri > 0) do {
+			set facet[eaxialap.id] tension eaxap_tens;
+		};
+		set edge[eaxap.id] zetar zetar_ring_baseline;
+		eazimu_tens := (eaxap.zetar*eaxap.ringthickness);
+		foreach edge eazimu where (cringedge == ring_max && e_side > 0) do {
+			set edge[eazimu.id] tension eazimu_tens;
+		};
+	};
+
+	// for the bands between the 2 poles, not inclusive of the poles
+	// If this is a lateral threadmill-style setup, 'band_max' is not at the apical pole. This is more true for the lateral bands of neighbours.
+	// As for the center cell, its 'band_max' is indeed at the apical pole, so the 'jojo' loop does not include 'band_max' because the apical pole is already being treated above.
+	for ( jojo := 1 ; jojo <= (band_max) ; jojo := jojo + 1 ) {
+
+		// for bands below 'ref_position', such bands are not within the OZ for the extrusion case
+		foreach edge eax where (cbandwidth == jojo && cbandwidth < (ref_position) && e_side == 1) do {
+
+			band_position := jojo;
+
+			set edge[eax.id] bandthickness ini_bthickness;
+			set edge[eax.id] banddepoly ini_bdepoly;
+			set edge[eax.id] bandeqmthickness ini_beqmthickness;
+			set edge[eax.id] bandviscous ini_bviscous;
+
+			set edge[eax.id] ringthickness ini_rthickness;
+			set edge[eax.id] ringdepoly ini_rdepoly;
+			set edge[eax.id] ringeqmthickness ini_reqmthickness;
+			set edge[eax.id] ringviscous ini_rviscous;
+
+			// Since the bands below 'ref_position' are always outside of OZ
+			set edge[eax.id] zetab (zetab_band_baseline);
+			eax_tens := (eax.zetab*eax.bandthickness);
+			foreach facet eaxial where (tri == band_position && f_side > 0) do {
+				set facet[eaxial.id] tension eax_tens;
+			};
+			set edge[eax.id] zetar zetar_ring_baseline;
+			eazimu_tens := (eax.zetar*eax.ringthickness);
+			foreach edge eazimu where (cringedge == band_position && e_side > 0) do {
+				set edge[eazimu.id] tension eazimu_tens;
+			};
+		};
+
+		// for bands at the same level and or above 'ref_position'
+		// As long 'jojo' begins from '1', writing 'cbandwidth>=(ref_position) would not mess things up
+		foreach edge eax where (cbandwidth == jojo && cbandwidth >= (ref_position) && e_side == 1) do {
+
+			band_position := jojo;
+
+			set edge[eax.id] bandthickness ini_bthickness;
+			set edge[eax.id] banddepoly ini_bdepoly;
+			set edge[eax.id] bandeqmthickness ini_beqmthickness;
+			set edge[eax.id] bandviscous ini_bviscous;
+
+			set edge[eax.id] ringthickness ini_rthickness;
+			set edge[eax.id] ringdepoly ini_rdepoly;
+			set edge[eax.id] ringeqmthickness ini_reqmthickness;
+			set edge[eax.id] ringviscous ini_rviscous;
+
+			// zetab is at baseline level when it is outside of overactive zone, 2nd degree & higher order away from OZ boundary
+			set edge[eax.id] zetab (zetab_band_baseline);
+			eax_tens := (eax.zetab*eax.bandthickness);
+			foreach facet eaxial where (tri == band_position && f_side > 0) do {
+				set facet[eaxial.id] tension eax_tens;
+			};
+			set edge[eax.id] zetar zetar_ring_baseline;
+			eazimu_tens := (eax.zetar*eax.ringthickness);
+			foreach edge eazimu where (cringedge == band_position && e_side > 0) do {
+				set edge[eazimu.id] tension eazimu_tens;
+			};
+		};
+
+	};
+
+	// for the special magenta basal contracting ring on centre cell
+	// On centre cell, to determine the cringedge value of the basal magenta ring
+	basal_ring_posit := avg(edge elle where (elle.color == magenta), elle.cringedge);
+	// Set attributes and tension on basal contracting ring
+	foreach edge bee where (bee.cbandwidth == basal_ring_posit && e_side == 1) do {
+
+		set edge[bee.id] ringthickness basecontract_rthickness;
+		set edge[bee.id] ringdepoly basecontract_rdepoly;
+		set edge[bee.id] ringeqmthickness basecontract_reqmthickness;
+		set edge[bee.id] ringviscous basecontract_rviscous;
+
+		set edge[bee.id] zetar basecontract_zetar_ring;
+		eazimu_tens := (bee.zetar*bee.ringthickness);
+		foreach edge eazimu where (color == magenta && cringedge == basal_ring_posit && e_side > 0) do {
+			set edge[eazimu.id] tension eazimu_tens;
+		};
+	};
+
+	// coloring	of overactive zone
+	foreach edge exx where (e_side == 1 && zetab > ((4/5)*sig_amp) && cbandwidth > 0 ) do {
+		band_axx:= exx.cbandwidth;
+		foreach facet ff where (ff.tri == band_axx) do {
+			set facet[ff.id] color 4;	//red
+		};
+	};
+	foreach edge exx where (e_side == 1 && zetab > ((4/5)*sig_amp) && base_spoke == 1) do {
+		foreach facet ff where (ff.basespoke_tri == 1) do {
+			set facet[ff.id] color 4;	//red
+		};
+	};
+
+	foreach edge exx where (e_side == 1 && zetab > ((3/5)*sig_amp) && zetab <= ((4/5)*sig_amp) && cbandwidth > 0 ) do {
+		band_axx:= exx.cbandwidth;
+		foreach facet ff where (ff.tri == band_axx) do {
+			set facet[ff.id] color 12;	//lightred
+		};
+	};
+	foreach edge exx where (e_side == 1 && zetab > ((3/5)*sig_amp) && zetab <= ((4/5)*sig_amp) && base_spoke == 1) do {
+		foreach facet ff where (ff.basespoke_tri == 1) do {
+			set facet[ff.id] color 12;	//lightred
+		};
+	};
+
+	foreach edge exx where (e_side == 1 && zetab > ((2/5)*sig_amp) && zetab <= ((3/5)*sig_amp) && cbandwidth > 0 ) do {
+		band_axx:= exx.cbandwidth;
+		foreach facet ff where (ff.tri == band_axx) do {
+			set facet[ff.id] color 2;	//green
+		};
+	};
+	foreach edge exx where (e_side == 1 && zetab > ((2/5)*sig_amp) && zetab <= ((3/5)*sig_amp) && base_spoke == 1) do {
+		foreach facet ff where (ff.basespoke_tri == 1) do {
+			set facet[ff.id] color 2;	//green
+		};
+	};
+
+	foreach edge exx where (e_side == 1 && zetab > ((1/5)*sig_amp) && zetab <= ((2/5)*sig_amp) && cbandwidth > 0 ) do {
+		band_axx:= exx.cbandwidth;
+		foreach facet ff where (ff.tri == band_axx) do {
+			set facet[ff.id] color 9;	//lightblue
+		};
+	};
+	foreach edge exx where (e_side == 1 && zetab > ((1/5)*sig_amp) && zetab <= ((2/5)*sig_amp) && base_spoke == 1) do {
+		foreach facet ff where (ff.basespoke_tri == 1) do {
+			set facet[ff.id] color 9;	//lightblue
+		};
+	};
+
+	foreach edge exx where (e_side == 1 && zetab > (zetab_band_baseline) && zetab <= ((1/5)*sig_amp) && cbandwidth > 0 ) do {
+		band_axx:= exx.cbandwidth;
+		foreach facet ff where (ff.tri == band_axx) do {
+			set facet[ff.id] color 3;	//cyan
+		};
+	};
+	foreach edge exx where (e_side == 1 && zetab > (zetab_band_baseline) && zetab <= ((1/5)*sig_amp) && base_spoke == 1) do {
+		foreach facet ff where (ff.basespoke_tri == 1) do {
+			set facet[ff.id] color 3;	//cyan
+		};
+	};
+
+	foreach edge exx where (e_side == 1 && zetab == (zetab_band_baseline) && cbandwidth > 0 ) do {
+		band_axx:= exx.cbandwidth;
+		foreach facet ff where (ff.tri == band_axx) do {
+			set facet[ff.id] color 14;	// yellow
+		};
+	};
+	foreach edge exx where (e_side == 1 && zetab == (zetab_band_baseline) && base_spoke == 1) do {
+		foreach facet ff where (ff.basespoke_tri == 1) do {
+			set facet[ff.id] color 14;	// yellow
+		};
+	};
+};
+ini_cortex_prop;
+
+//****************************************************************************************************
+
